@@ -1,0 +1,88 @@
+const { Client, GatewayIntentBits } = require("discord.js");
+const fetch = require("node-fetch");
+
+const DISCORD_TOKEN = "MTM3OTUyMDQ5NjgyMzE3MzE1MQ.GM8v5D.7NnTrv0YrZrERK_c0u0n4WjY-bjCGKplEOGcvk";
+const SHEET_URL = "https://script.google.com/macros/s/AKfycbw3lvEBbl5dyW8jDm6bmYo7HmiqRKcmvLCTbUIbewXpRk349l7Nsectj57oIeo4cFGU/exec";
+
+const client = new Client({
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent,
+  ],
+});
+
+let lastSheetMessage = null;
+
+async function fetchMessagesFromSheet() {
+  try {
+    const res = await fetch(`${SHEET_URL}?action=get`);
+    const json = await res.json();
+    return json;
+  } catch (err) {
+    console.error("Error fetching sheet:", err);
+    return [];
+  }
+}
+
+async function sendMessageToSheet(user, text) {
+  try {
+    const url = `${SHEET_URL}?action=post&user=${encodeURIComponent(user)}&text=${encodeURIComponent(text)}`;
+    await fetch(url);
+  } catch (err) {
+    console.error("Error sending to sheet:", err);
+  }
+}
+
+async function broadcastSheetMessage(message) {
+  // Send the new sheet message to **all text channels** the bot can send messages in
+  for (const guild of client.guilds.cache.values()) {
+    for (const channel of guild.channels.cache.values()) {
+      if (
+        channel.isTextBased() &&
+        channel.permissionsFor(guild.members.me).has("SendMessages")
+      ) {
+        try {
+          await channel.send(`📄 From Sheet: ${message}`);
+        } catch (e) {
+          // Ignore errors (like missing permissions)
+        }
+      }
+    }
+  }
+}
+
+async function pollSheet() {
+  const messages = await fetchMessagesFromSheet();
+  if (!messages.length) return;
+
+  const latestMsg = messages[messages.length - 1];
+  const combined = `${latestMsg.user}: ${latestMsg.text}`;
+
+  if (combined !== lastSheetMessage) {
+    lastSheetMessage = combined;
+    console.log("New sheet message:", combined);
+    await broadcastSheetMessage(combined);
+  }
+}
+
+client.once("ready", async () => {
+  console.log(`✅ Logged in as ${client.user.tag}`);
+
+  // Initial poll on startup
+  await pollSheet();
+
+  // Poll every 5 seconds
+  setInterval(pollSheet, 5000);
+});
+
+client.on("messageCreate", async (message) => {
+  if (message.author.bot) return;
+
+  const combined = `${message.author.username}: ${message.content}`;
+  console.log("Sending Discord msg to sheet:", combined);
+
+  await sendMessageToSheet(message.author.username, message.content);
+});
+
+client.login(DISCORD_TOKEN);
